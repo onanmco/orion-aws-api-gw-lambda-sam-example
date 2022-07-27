@@ -156,11 +156,29 @@ Resources:
             RestApiId:
               Ref: BlogApplicationAPI
 
+  LambdaTokenAuthorizer:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      CodeUri: functions/authorizer/
+      Handler: index.handler
+      Runtime: nodejs16.x
+      Layers:
+        - !Ref BlogApplicationDependencies
+      Architectures:
+        - x86_64
+      Description: Token based HTTP request authorizer.
+      Role: !Ref LambdaRoleArn
+      Environment:
+        Variables:
+          SECRET_KEY: !Ref SecretKey
+  
   BlogApplicationAPI:
     Type: AWS::Serverless::Api
     DependsOn:
+      - LambdaTokenAuthorizer
       - Register
       - Login
+      - CreatePost
     Properties:
       StageName: !Ref StageName
       DefinitionBody:
@@ -187,11 +205,31 @@ Resources:
           /posts:
             post:
               responses: {}
+              security:
+                - LambdaTokenAuthorizer: []
               x-amazon-apigateway-integration:
                 uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CreatePost.Arn}/invocations"
                 passthroughBehavior: when_no_match
                 httpMethod: POST
                 type: aws_proxy
+        securityDefinitions:
+          LambdaTokenAuthorizer:
+            type: "apiKey"
+            name: "authorizationToken"
+            in: "header"
+            x-amazon-apigateway-authtype: "custom"
+            x-amazon-apigateway-authorizer:
+              type: "token"
+              authorizerUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaTokenAuthorizer.Arn}/invocations"
+              authorizerResultTtlInSeconds: 0
+
+  BlogApplicationAPILambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName: !Ref LambdaTokenAuthorizer
+      Principal: "apigateway.amazonaws.com"
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${BlogApplicationAPI}/*"
 
 Outputs:
   BlogApplicationAPI:
