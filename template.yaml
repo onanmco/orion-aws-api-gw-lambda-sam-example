@@ -1,0 +1,199 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  blog-application
+  
+Globals:
+  Function:
+    Timeout: 30
+    Tracing: Active
+  Api:
+    TracingEnabled: True
+
+Parameters:
+  StageName:
+    Type: String
+    Default: latest
+  SecretKey:
+    Type: String
+    Default: SUPERSECRET
+  DBInstanceName:
+    Type: String
+    Default: orion-database
+  SecretName:
+    Type: String
+    Default: orion-database-secret-credentials
+  DBUsername:
+    Type: String
+    Default: postgres
+  DBPassword:
+    Type: String
+    Default: YourDBPassword
+  LambdaSubnet:
+    Type: String
+    Default: subnet-08f33ef19c5992981
+  LambdaSecurityGroup:
+    Type: String
+    Default: sg-0279e46b390807fa7
+  LambdaRoleArn:
+    Type: String
+    Default: arn:aws:iam::302947422085:role/LambdaRole
+
+Resources:
+  DBSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: RDS Credentials
+      Name: !Ref SecretName
+      SecretString: !Sub "{\"username\": \"${DBUsername}\", \"password\": \"${DBPassword}\"}"
+  DBSecretRDSInstanceAttachment:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId: !Ref DBSecret
+      TargetId: !Ref DBInstanceName
+      TargetType: AWS::RDS::DBInstance
+
+  BlogApplicationDependencies:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      CompatibleArchitectures:
+        - x86_64
+      CompatibleRuntimes:
+        - nodejs12.x
+        - nodejs14.x
+        - nodejs16.x
+      Content: dependencies/
+      Description: "Dependencies layer for Blog Application"
+      LayerName: "BlogApplicationDependencies"
+      LicenseInfo: "MIT"
+
+  Register:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/user/register/
+      Handler: index.handler
+      Runtime: nodejs16.x
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          DB_CONFIG_SECRET_ID: !Ref SecretName
+          REGION: !Ref AWS::Region
+          SECRET_KEY: !Ref SecretKey
+      VpcConfig:
+        SubnetIds:
+          - !Ref LambdaSubnet
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+      Role: !Ref LambdaRoleArn
+      Layers:
+        - !Ref BlogApplicationDependencies
+      Events:
+        PostRequest:
+          Type: Api
+          Properties:
+            Path: /register
+            Method: post
+            RestApiId:
+              Ref: BlogApplicationAPI
+
+  Login:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/user/login/
+      Handler: index.handler
+      Runtime: nodejs16.x
+      Architectures:
+        - x86_64
+      Layers:
+        - !Ref BlogApplicationDependencies
+      Environment:
+        Variables:
+          DB_CONFIG_SECRET_ID: !Ref SecretName
+          REGION: !Ref AWS::Region
+          SECRET_KEY: !Ref SecretKey
+      VpcConfig:
+        SubnetIds:
+          - !Ref LambdaSubnet
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+      Role: !Ref LambdaRoleArn
+      Events:
+        PostRequest:
+          Type: Api
+          Properties:
+            Path: /login
+            Method: post
+            RestApiId:
+              Ref: BlogApplicationAPI
+ 
+  CreatePost:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/post/create-post/
+      Handler: index.handler
+      Runtime: nodejs16.x
+      Layers:
+        - !Ref BlogApplicationDependencies
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          DB_CONFIG_SECRET_ID: !Ref SecretName
+          REGION: !Ref AWS::Region
+      VpcConfig:
+        SubnetIds:
+          - !Ref LambdaSubnet
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+      Role: !Ref LambdaRoleArn
+      Events:
+        PostRequest:
+          Type: Api
+          Properties:
+            Path: /posts
+            Method: post
+            RestApiId:
+              Ref: BlogApplicationAPI
+
+  BlogApplicationAPI:
+    Type: AWS::Serverless::Api
+    DependsOn:
+      - Register
+      - Login
+    Properties:
+      StageName: !Ref StageName
+      DefinitionBody:
+        swagger: 2.0
+        info:
+          title: Blog API
+        paths:
+          /register:
+            post:
+              responses: {}
+              x-amazon-apigateway-integration:
+                uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Register.Arn}/invocations"
+                passthroughBehavior: when_no_match
+                httpMethod: POST
+                type: aws_proxy
+          /login:
+            post:
+              responses: {}
+              x-amazon-apigateway-integration:
+                uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Login.Arn}/invocations"
+                passthroughBehavior: when_no_match
+                httpMethod: POST
+                type: aws_proxy
+          /posts:
+            post:
+              responses: {}
+              x-amazon-apigateway-integration:
+                uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CreatePost.Arn}/invocations"
+                passthroughBehavior: when_no_match
+                httpMethod: POST
+                type: aws_proxy
+
+Outputs:
+  BlogApplicationAPI:
+    Description: "API Gateway endpoint URL for ${StageName} stage for BlogApplicationAPI"
+    Value: !Sub "https://${BlogApplicationAPI}.execute-api.${AWS::Region}.amazonaws.com/${StageName}/"
