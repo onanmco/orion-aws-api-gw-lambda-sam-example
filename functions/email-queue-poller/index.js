@@ -6,7 +6,7 @@ const sqs = new AWS.SQS();
 exports.handler = async event => {
     console.log(JSON.stringify(event));
 
-    const failures = 0;
+    let failures = 0;
     for (const { receiptHandle, body } of event.Records) {
         try {
             await ses.sendEmail(JSON.parse(body)).promise();
