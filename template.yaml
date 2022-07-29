@@ -38,6 +38,15 @@ Parameters:
   LambdaRoleArn:
     Type: String
     Default: arn:aws:iam::302947422085:role/LambdaRole
+  FromEmailAddress:
+    Type: String
+    Default: your-email-address@example.com
+  EmailBucketName:
+    Type: String
+    Default: orion-innovation-email-templates
+  EmailQueueName:
+    Type: String
+    Default: EmailQueue
 
 Resources:
   DBSecret:
@@ -156,6 +165,77 @@ Resources:
             RestApiId:
               Ref: BlogApplicationAPI
 
+  EmailBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref EmailBucketName
+
+  NotifyUsers:
+    Type: AWS::Serverless::Function
+    DependsOn:
+      - EmailBucket
+    Properties:
+      CodeUri: functions/user/notify/
+      Handler: index.handler
+      Runtime: nodejs16.x
+      Layers:
+        - !Ref BlogApplicationDependencies
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          BUCKET: !Ref EmailBucket
+          REGION: !Ref AWS::Region
+          DB_CONFIG_SECRET_ID: !Ref SecretName
+          FROM: !Ref FromEmailAddress
+          QUEUE_URL: !Ref EmailQueue
+      VpcConfig:
+        SubnetIds:
+          - !Ref LambdaSubnet
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+      Role: !Ref LambdaRoleArn
+      Events:
+        PostRequest:
+          Type: Api
+          Properties:
+            Path: /users/notify
+            Method: post
+            RestApiId:
+              Ref: BlogApplicationAPI
+
+  EmailQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Ref EmailQueueName
+      DelaySeconds: 0
+      VisibilityTimeout: 30
+      MessageRetentionPeriod: 345600
+      ReceiveMessageWaitTimeSeconds: 0
+  
+  EmailQueuePoller:
+    Type: AWS::Serverless::Function
+    DependsOn:
+      - EmailQueue
+    Properties:
+      CodeUri: functions/email-queue-poller/
+      Handler: index.handler
+      Runtime: nodejs16.x
+      Layers:
+        - !Ref BlogApplicationDependencies
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          REGION: !Ref AWS::Region
+          QUEUE_URL: !Ref EmailQueue
+      Role: !Ref LambdaRoleArn
+      Events:
+        MySQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt EmailQueue.Arn
+  
   LambdaTokenAuthorizer:
     Type: 'AWS::Serverless::Function'
     Properties:
@@ -179,6 +259,7 @@ Resources:
       - Register
       - Login
       - CreatePost
+      - NotifyUsers
     Properties:
       StageName: !Ref StageName
       DefinitionBody:
@@ -210,6 +291,14 @@ Resources:
               x-amazon-apigateway-integration:
                 uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CreatePost.Arn}/invocations"
                 passthroughBehavior: when_no_match
+                httpMethod: POST
+                type: aws_proxy
+          /users/notify:
+            post:
+              responses: {}
+              x-amazon-apigateway-integration:
+                uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${NotifyUsers.Arn}/invocations"
+                passthroughBehavior: "when_no_match"
                 httpMethod: POST
                 type: aws_proxy
         securityDefinitions:
