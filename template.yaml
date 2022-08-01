@@ -47,6 +47,21 @@ Parameters:
   EmailQueueName:
     Type: String
     Default: EmailQueue
+  SubscriptionRenewalQueueName:
+    Type: String
+    Default: SubscriptionRenewalQueue
+  TransactionsQueueName:
+    Type: String
+    Default: TransactionsQueue
+  PaymentNotificationsQueueName:
+    Type: String
+    Default: PaymentNotificationsQueue
+  PaymentSuccessfulEmailTemplateKey:
+    Type: String
+    Default: payment_successful.html
+  TransactionsTopicName:
+    Type: String
+    Default: Transactions
 
 Resources:
   DBSecret:
@@ -135,7 +150,7 @@ Resources:
             Method: post
             RestApiId:
               Ref: BlogApplicationAPI
- 
+
   CreatePost:
     Type: AWS::Serverless::Function
     Properties:
@@ -203,6 +218,239 @@ Resources:
             Method: post
             RestApiId:
               Ref: BlogApplicationAPI
+
+  TransactionsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Ref TransactionsQueueName
+      DelaySeconds: 0
+      VisibilityTimeout: 30
+      MessageRetentionPeriod: 345600
+      ReceiveMessageWaitTimeSeconds: 0
+
+  TransactionsQueuePoller:
+    Type: AWS::Serverless::Function
+    DependsOn:
+      - TransactionsQueue
+    Properties:
+      CodeUri: functions/subscription-renewal/save-transaction/
+      Handler: index.handler
+      Runtime: nodejs16.x
+      Layers:
+        - !Ref BlogApplicationDependencies
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          REGION: !Ref AWS::Region
+          TRANSACTIONS_QUEUE_URL: !Ref TransactionsQueue
+          DB_CONFIG_SECRET_ID: !Ref SecretName
+      VpcConfig:
+        SubnetIds:
+          - !Ref LambdaSubnet
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+      Role: !Ref LambdaRoleArn
+      Events:
+        MySQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt TransactionsQueue.Arn
+  
+  PaymentNotificationsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Ref PaymentNotificationsQueueName
+      DelaySeconds: 0
+      VisibilityTimeout: 30
+      MessageRetentionPeriod: 345600
+      ReceiveMessageWaitTimeSeconds: 0
+
+  PaymentNotificationsQueuePoller:
+    Type: AWS::Serverless::Function
+    DependsOn:
+      - PaymentNotificationsQueue
+    Properties:
+      CodeUri: functions/subscription-renewal/notify-user/
+      Handler: index.handler
+      Runtime: nodejs16.x
+      Layers:
+        - !Ref BlogApplicationDependencies
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          REGION: !Ref AWS::Region
+          EMAIL_TEMPLATES_BUCKET_NAME: !Ref EmailBucketName
+          PAYMENT_SUCCESSFUL_EMAIL_TEMPLATE_KEY: !Ref PaymentSuccessfulEmailTemplateKey
+          FROM_EMAIL: !Ref FromEmailAddress
+          PAYMENT_NOTIFICATIONS_QUEUE_URL: !Ref PaymentNotificationsQueue
+          DB_CONFIG_SECRET_ID: !Ref SecretName
+      Role: !Ref LambdaRoleArn
+      Events:
+        MySQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt PaymentNotificationsQueue.Arn
+
+  TransactionsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Ref TransactionsTopicName
+
+  TransactionsTopicSubscriptionForTransactionsQueue:
+    Type: AWS::SNS::Subscription
+    DependsOn:
+      - TransactionsQueue
+      - TransactionsTopic
+    Properties: 
+      Endpoint: !GetAtt TransactionsQueue.Arn
+      Protocol: sqs
+      RawMessageDelivery: true
+      Region: !Sub "${AWS::Region}"
+      TopicArn: !Ref TransactionsTopic
+
+  TransactionsTopicSubscriptionForPaymentNotificationsQueue:
+    Type: AWS::SNS::Subscription
+    DependsOn:
+      - PaymentNotificationsQueue
+      - TransactionsTopic
+    Properties:
+      Endpoint: !GetAtt PaymentNotificationsQueue.Arn
+      Protocol: sqs
+      RawMessageDelivery: true
+      Region: !Sub "${AWS::Region}"
+      TopicArn: !Ref TransactionsTopic
+
+  TransactionsQueuePolicyForSNS:
+    Type: AWS::SQS::QueuePolicy
+    DependsOn:
+      - TransactionsQueue
+    Properties:
+      PolicyDocument:
+        Id: TransactionsQueuePolicyForSNS
+        Version: '2012-10-17'
+        Statement:
+          - Sid: TransactionsQueuePolicyForSNS
+            Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action:
+              - sqs:SendMessage
+            Resource: 
+              - !GetAtt TransactionsQueue.Arn
+      Queues:
+        - !Ref TransactionsQueue
+
+  PaymentNotificationsQueuePolicyForSNS:
+    Type: AWS::SQS::QueuePolicy
+    DependsOn:
+      - PaymentNotificationsQueue
+    Properties:
+      PolicyDocument:
+        Id: PaymentNotificationsQueuePolicyForSNS
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PaymentNotificationsQueuePolicyForSNS
+            Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action:
+              - sqs:SendMessage
+            Resource: 
+              - !GetAtt PaymentNotificationsQueue.Arn
+      Queues:
+        - !Ref PaymentNotificationsQueue
+
+  SubscriptionRenewalQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Ref SubscriptionRenewalQueueName
+      DelaySeconds: 0
+      VisibilityTimeout: 30
+      MessageRetentionPeriod: 345600
+      ReceiveMessageWaitTimeSeconds: 0
+
+  SubscriptionRenewalQueuePoller:
+    Type: AWS::Serverless::Function
+    DependsOn:
+      - SubscriptionRenewalQueue
+      - TransactionsTopic
+    Properties:
+      CodeUri: functions/subscription-renewal/process-payment/
+      Handler: index.handler
+      Runtime: nodejs16.x
+      Layers:
+        - !Ref BlogApplicationDependencies
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          REGION: !Ref AWS::Region
+          SUBSCRIPTION_RENEWAL_QUEUE_URL: !Ref SubscriptionRenewalQueue
+          TRANSACTIONS_TOPIC_ARN: !Ref TransactionsTopic
+          DB_CONFIG_SECRET_ID: !Ref SecretName
+      VpcConfig:
+        SubnetIds:
+          - !Ref LambdaSubnet
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+      Role: !Ref LambdaRoleArn
+      Events:
+        MySQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt SubscriptionRenewalQueue.Arn
+
+  FetchAllSubscriptions:
+    Type: AWS::Serverless::Function
+    DependsOn:
+      - SubscriptionRenewalQueue
+      - TransactionsTopic
+    Properties:
+      CodeUri: functions/subscription-renewal/fetch-all-subscriptions/
+      Handler: index.handler
+      Runtime: nodejs16.x
+      Layers:
+        - !Ref BlogApplicationDependencies
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          REGION: !Ref AWS::Region
+          SUBSCRIPTION_RENEWAL_QUEUE_URL: !Ref SubscriptionRenewalQueue
+          DB_CONFIG_SECRET_ID: !Ref SecretName
+      VpcConfig:
+        SubnetIds:
+          - !Ref LambdaSubnet
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+      Role: !Ref LambdaRoleArn
+
+  SubscriptionRenewalScheduledTask:
+    Type: AWS::Events::Rule
+    DependsOn:
+      - FetchAllSubscriptions
+    Properties: 
+      Description: A scheduled task which renews all subscriptions at every 25th of month
+      Name: SubscriptionRenewalScheduledTask
+      ScheduleExpression: cron(0 8 25 * ? *)
+      State: ENABLED
+      Targets: 
+        - 
+          Arn: !GetAtt FetchAllSubscriptions.Arn
+          Id: FetchAllSubscriptions
+
+  PermissionsForSubscriptionRenewalScheduledTaskToInvokeLambda:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - FetchAllSubscriptions
+      - SubscriptionRenewalScheduledTask
+    Properties: 
+      FunctionName: !Ref FetchAllSubscriptions
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt SubscriptionRenewalScheduledTask.Arn
 
   EmailQueue:
     Type: AWS::SQS::Queue
