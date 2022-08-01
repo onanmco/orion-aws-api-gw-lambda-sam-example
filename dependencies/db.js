@@ -17,7 +17,12 @@ const getConnection = async () => {
             host,
             port,
             database
-        }
+        },
+        pool: {
+            min: 0,
+            max: 1
+        },
+        acquireConnectionTimeout: 30000
     });
 };
 
