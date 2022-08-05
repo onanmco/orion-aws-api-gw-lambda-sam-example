@@ -568,6 +568,240 @@ Resources:
       Principal: "apigateway.amazonaws.com"
       SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${BlogApplicationAPI}/*"
 
+  GetUserSubscriptionDetails:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/user-subscription/get/
+      Handler: index.handler
+      Runtime: nodejs16.x
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          DB_CONFIG_SECRET_ID: !Ref SecretName
+          REGION: !Ref AWS::Region
+      VpcConfig:
+        SubnetIds:
+          - !Ref LambdaSubnet
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+      Role: !Ref LambdaRoleArn
+      Layers:
+        - !Ref BlogApplicationDependencies
+  
+  GetSubscription:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/subscription/get/
+      Handler: index.handler
+      Runtime: nodejs16.x
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          DB_CONFIG_SECRET_ID: !Ref SecretName
+          REGION: !Ref AWS::Region
+      VpcConfig:
+        SubnetIds:
+          - !Ref LambdaSubnet
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+      Role: !Ref LambdaRoleArn
+      Layers:
+        - !Ref BlogApplicationDependencies
+  
+  GetUser:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/user/get/
+      Handler: index.handler
+      Runtime: nodejs16.x
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          DB_CONFIG_SECRET_ID: !Ref SecretName
+          REGION: !Ref AWS::Region
+      VpcConfig:
+        SubnetIds:
+          - !Ref LambdaSubnet
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+      Role: !Ref LambdaRoleArn
+      Layers:
+        - !Ref BlogApplicationDependencies
+  
+  ChargeCustomer:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/user/charge/
+      Handler: index.handler
+      Runtime: nodejs16.x
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          DB_CONFIG_SECRET_ID: !Ref SecretName
+          REGION: !Ref AWS::Region
+      VpcConfig:
+        SubnetIds:
+          - !Ref LambdaSubnet
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+      Role: !Ref LambdaRoleArn
+      Layers:
+        - !Ref BlogApplicationDependencies
+  
+  SaveTransaction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/transaction/save/
+      Handler: index.handler
+      Runtime: nodejs16.x
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          DB_CONFIG_SECRET_ID: !Ref SecretName
+          REGION: !Ref AWS::Region
+      VpcConfig:
+        SubnetIds:
+          - !Ref LambdaSubnet
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+      Role: !Ref LambdaRoleArn
+      Layers:
+        - !Ref BlogApplicationDependencies
+  
+  ExtendSubscription:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/subscription/extend/
+      Handler: index.handler
+      Runtime: nodejs16.x
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          DB_CONFIG_SECRET_ID: !Ref SecretName
+          REGION: !Ref AWS::Region
+      VpcConfig:
+        SubnetIds:
+          - !Ref LambdaSubnet
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+      Role: !Ref LambdaRoleArn
+      Layers:
+        - !Ref BlogApplicationDependencies
+  
+  RemoveTransaction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/transaction/remove/
+      Handler: index.handler
+      Runtime: nodejs16.x
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          DB_CONFIG_SECRET_ID: !Ref SecretName
+          REGION: !Ref AWS::Region
+      VpcConfig:
+        SubnetIds:
+          - !Ref LambdaSubnet
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+      Role: !Ref LambdaRoleArn
+      Layers:
+        - !Ref BlogApplicationDependencies
+  
+  RefundToCustomer:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/user/refund/
+      Handler: index.handler
+      Runtime: nodejs16.x
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          DB_CONFIG_SECRET_ID: !Ref SecretName
+          REGION: !Ref AWS::Region
+      VpcConfig:
+        SubnetIds:
+          - !Ref LambdaSubnet
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+      Role: !Ref LambdaRoleArn
+      Layers:
+        - !Ref BlogApplicationDependencies
+  
+  SendEmail:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/email/send/
+      Handler: index.handler
+      Runtime: nodejs16.x
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          DB_CONFIG_SECRET_ID: !Ref SecretName
+          REGION: !Ref AWS::Region
+          FROM_EMAIL: !Ref FromEmailAddress
+      VpcConfig:
+        SubnetIds:
+          - !Ref LambdaSubnet
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+      Role: !Ref LambdaRoleArn
+      Layers:
+        - !Ref BlogApplicationDependencies
+
+  SubscriptionRenewalStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: state_machines/subscriptionRenewalStepFunction.asl.json
+      DefinitionSubstitutions:
+        GetUserSubscriptionDetailsArn: !GetAtt GetUserSubscriptionDetails.Arn
+        GetSubscriptionArn: !GetAtt GetSubscription.Arn
+        GetUserArn: !GetAtt GetUser.Arn
+        ChargeCustomerArn: !GetAtt ChargeCustomer.Arn
+        SaveTransactionArn: !GetAtt SaveTransaction.Arn
+        ExtendSubscriptionArn: !GetAtt ExtendSubscription.Arn
+        RemoveTransactionArn: !GetAtt RemoveTransaction.Arn
+        RefundToCustomerArn: !GetAtt RefundToCustomer.Arn
+        SendEmailArn: !GetAtt SendEmail.Arn
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref GetUserSubscriptionDetails
+        - LambdaInvokePolicy:
+            FunctionName: !Ref GetSubscription
+        - LambdaInvokePolicy:
+            FunctionName: !Ref GetUser
+        - LambdaInvokePolicy:
+            FunctionName: !Ref ChargeCustomer
+        - LambdaInvokePolicy:
+            FunctionName: !Ref SaveTransaction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref ExtendSubscription
+        - LambdaInvokePolicy:
+            FunctionName: !Ref RemoveTransaction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref RefundToCustomer
+        - LambdaInvokePolicy:
+            FunctionName: !Ref SendEmail
+    DependsOn: 
+      - GetUserSubscriptionDetails
+      - GetSubscription
+      - GetUser
+      - ChargeCustomer
+      - SaveTransaction
+      - ExtendSubscription
+      - RemoveTransaction
+      - RefundToCustomer
+      - SendEmail
+
 Outputs:
   BlogApplicationAPI:
     Description: "API Gateway endpoint URL for ${StageName} stage for BlogApplicationAPI"

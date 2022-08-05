@@ -1,0 +1,211 @@
+{
+  "Comment": "A description of my state machine",
+  "StartAt": "Get user subscription details",
+  "States": {
+    "Get user subscription details": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "Payload.$": "$",
+        "FunctionName": "${GetUserSubscriptionDetailsArn}"
+      },
+      "Next": "Wait until renewal date",
+      "ResultPath": "$.userSubscription",
+      "ResultSelector": {
+        "Payload.$": "$.Payload"
+      }
+    },
+    "Wait until renewal date": {
+      "Type": "Wait",
+      "Next": "Get Subscription",
+      "TimestampPath": "$.userSubscription.Payload.renewal_date"
+    },
+    "Get Subscription": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${GetSubscriptionArn}",
+        "Payload": {
+          "id.$": "$.userSubscription.Payload.subscription_id"
+        }
+      },
+      "ResultSelector": {
+        "Payload.$": "$.Payload"
+      },
+      "ResultPath": "$.subscription",
+      "Next": "Get User"
+    },
+    "Get User": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${GetUserArn}",
+        "Payload": {
+          "id.$": "$.user_id"
+        }
+      },
+      "Next": "Charge customer",
+      "ResultSelector": {
+        "Payload.$": "$.Payload"
+      },
+      "ResultPath": "$.user"
+    },
+    "Charge customer": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${ChargeCustomerArn}",
+        "Payload": {
+          "price.$": "$.subscription.Payload.price",
+          "user_id.$": "$.user_id"
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 2,
+          "BackoffRate": 1
+        }
+      ],
+      "ResultPath": null,
+      "Next": "Save Transaction",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "Set Notification Settings For Payment Failure",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "Set Notification Settings For Payment Failure": {
+      "Type": "Pass",
+      "Next": "Send Email",
+      "ResultPath": "$.emailSettings",
+      "Result": {
+        "bucket": "orion-innovation-email-templates",
+        "key": "payment_failed.html"
+      }
+    },
+    "Save Transaction": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${SaveTransactionArn}",
+        "Payload": {
+          "user_subscription_id.$": "$.userSubscription.Payload.id",
+          "price.$": "$.subscription.Payload.price"
+        }
+      },
+      "ResultPath": "$.savedTransaction",
+      "ResultSelector": {
+        "Payload.$": "$.Payload"
+      },
+      "Next": "Extend Subscription"
+    },
+    "Extend Subscription": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${ExtendSubscriptionArn}",
+        "Payload": {
+          "id.$": "$.userSubscription.Payload.id"
+        }
+      },
+      "Next": "Set Notification Settings For Successful Payment",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "Remove transaction"
+        }
+      ],
+      "ResultPath": null
+    },
+    "Set Notification Settings For Successful Payment": {
+      "Type": "Pass",
+      "Next": "Send Email",
+      "Result": {
+        "bucket": "orion-innovation-email-templates",
+        "key": "payment_successful.html"
+      },
+      "ResultPath": "$.emailSettings"
+    },
+    "Send Email": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${SendEmailArn}",
+        "Payload": {
+          "bucket.$": "$.emailSettings.bucket",
+          "key.$": "$.emailSettings.key",
+          "email.$": "$.user.Payload.email",
+          "replacements": [
+            {
+              "placeholder": "###FIRST_NAME###",
+              "replacement.$": "$.user.Payload.first_name"
+            },
+            {
+              "placeholder": "###LAST_NAME###",
+              "replacement.$": "$.user.Payload.last_name"
+            },
+            {
+              "placeholder": "###SUBSCRIPTION_NAME###",
+              "replacement.$": "$.subscription.Payload.name"
+            },
+            {
+              "placeholder": "###PRICE###",
+              "replacement.$": "$.subscription.Payload.price"
+            }
+          ]
+        }
+      },
+      "ResultPath": null,
+      "Next": "Is Payment Successful?"
+    },
+    "Is Payment Successful?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.emailSettings.key",
+          "StringEquals": "payment_successful.html",
+          "Next": "Get user subscription details"
+        }
+      ],
+      "Default": "Fail"
+    },
+    "Remove transaction": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${RemoveTransactionArn}",
+        "Payload": {
+          "id.$": "$.savedTransaction.Payload.id"
+        }
+      },
+      "ResultPath": null,
+      "Next": "Refund to customer"
+    },
+    "Refund to customer": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${RefundToCustomerArn}",
+        "Payload": {
+          "user_id.$": "$.user_id",
+          "price.$": "$.subscription.Payload.price"
+        }
+      },
+      "ResultPath": null,
+      "Next": "Fail"
+    },
+    "Fail": {
+      "Type": "Fail"
+    }
+  }
+}
